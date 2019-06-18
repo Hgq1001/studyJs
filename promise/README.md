@@ -54,4 +54,84 @@ Promise 初探
             setTimeout(() => resolve('racePromise2'), 500);
         });
     
-        //正常情况，哪个promise先resolve或
+        //正常情况，哪个promise先resolve或reject,则返回哪个
+        Promise.race([racePromise1, racePromise2]).then(res => {
+            console.log('normal-->', res);   // Both resolve, but promise2 is faster , so return racePromise2
+        }).catch(error => {
+            return error;
+        });
+    
+        //当promise.race在setTimeout中执行，且delay时间大于等于慢的那个promise，则优先返回慢的promise的resolve活reject
+        setTimeout(() => Promise.race([racePromise1, racePromise2]).then(res => {
+            console.log('setTimeout-->', res);  // return  racePromise1
+        }).catch(error => {
+            console.log(error);
+        }), 1500);
+        
+**Promise.race模拟fetch请求超时**
+
+    let fetchPromise = (url) => fetch(url).then((response) => response.json());
+    let timeoutPromise = (timeout) => new Promise((resolve, reject) => setTimeout(() => resolve('请求超时，请重试！'), timeout));
+
+    let resetFetch = (url, timeout) => Promise.race([fetchPromise(url), timeoutPromise(timeout)]).then(res => {
+        console.log('resetFetch--->', res);
+    }).catch(error => {
+        console.log('resetFetch--->', error);
+    });
+
+    resetFetch('https://facebook.github.io/react-native/movies.json', 0); //  请求超时，请重试！
+
+**copy的Promise源码，可以看一下（正确性待验证）**
+    
+    function Promise(executor) {
+        let self = this;
+        self.value = undefined;
+        self.reason = undefined;
+        self.status = 'pending';
+        self.onResolvedCallbacks = []; // 2.可能new Promise中会有异步的操作，此时我们把异步操作时，执行的then函数的成功回调，统一保存在该数组中
+        self.onRejectedCallbacks = []; // 2.可能new Promise中会有异步的操作，此时我们把异步操作时，执行的then函数的失败回调，统一保存在该数组中
+        function resolve(value) {
+            if (self.status === 'pending') {
+                self.value = value;
+                self.status = 'resolved';
+                // 4.当调用resolve时，把该数组中存放的成功回调都执行一遍，如果是异步，则会把成功的回调都存到该数组里了，如果是异步，则没存到。
+                self.onResolvedCallbacks.forEach(fn => fn());
+            }
+        }
+
+        function reject(reason) {
+            if (self.status === 'pending') {
+                self.reason = reason;
+                self.status = 'rejected';
+                // 4.当调用reject时，把该数组中存放的失败回调都执行一遍，如果是异步，则会把成功的回调都存到该数组里了，如果是异步，则没存到。
+                self.onRejectedCallbacks.forEach(fn => fn());
+            }
+        }
+
+        try {
+            executor(resolve, reject);
+        } catch (error) {
+            reject(error);
+        }
+    }
+
+    Promise.prototype.then = function (onFulfilled, onRejected) {
+        let self = this;
+        if (self.status === 'resolved') {
+            onFulfilled(self.value);
+        }
+
+        if (self.status === 'rejected') {
+            onRejected(self.reason);
+        }
+
+        // 3.当new Promise中有resolve、reject处于异步中，执行then的时候，状态为pending，
+        if (self.status === 'pending') {
+            self.onResolvedCallbacks.push(() => {
+                onFulfilled(self.value);
+            }); // 3. 把成功的回调函数，存到该数组中，这样写的好处，就是把参数传进去，不需要将来遍历onResolvedCallbacks时，再传参
+            self.onRejectedCallbacks.push(() => {
+                onRejected(self.reason);
+            }); // 3. 把失败的回调函数，存到该数组中，这样写的好处，就是把参数传进去，不需要将来遍历onRejectedCallbacks时，再传参
+        }
+    };
